@@ -9,18 +9,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-type Config struct {
-	Model            string
-	Prompt           string
-	MaxTokens        int
-	Temperature      float64
-	TopP             float64
-	FrequencyPenalty float64
-	PresencePenalty  float64
-}
-
-var config Config
-
 func init() {
 	// Load environment variables from .env file
 	err := godotenv.Load()
@@ -34,8 +22,10 @@ func main() {
 	rootCmd := &cobra.Command{Use: "cmdexample"}
 
 	// 将子命令添加到根命令
-	rootCmd.AddCommand(cmd.SubCmd1)
+	rootCmd.AddCommand(cmd.CmdExample)
 	rootCmd.AddCommand(cmd.CmdExplain)
+	rootCmd.AddCommand(cmd.CmdRefactor)
+	rootCmd.AddCommand(cmd.CmdTranslate)
 
 	// 运行 Cobra 命令
 	if err := rootCmd.Execute(); err != nil {

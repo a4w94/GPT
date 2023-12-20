@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -39,30 +40,27 @@ func cmdExplainRun(cmd *cobra.Command, args []string) {
 	client := openai.NewClient(os.Getenv("OPENAI_API_KEY"))
 
 	req := explainSetting
-	fmt.Println("請輸入要解釋的code")
+	fmt.Println("Conversation")
 	fmt.Println("---------------------")
 	fmt.Print("> ")
-	// 一次性读取所有输入
-	var codeInput string
-	fmt.Scanln(&codeInput)
+	s := bufio.NewScanner(os.Stdin)
+	for s.Scan() {
+		msg := openai.ChatCompletionMessage{
+			Role:    openai.ChatMessageRoleUser,
+			Content: generatedPrompt(s.Text()),
+		}
+		if len(req.Messages) == 2 {
+			req.Messages[1] = msg
+		}
+		req.Messages = append(req.Messages, msg)
+		resp, err := client.CreateChatCompletion(context.Background(), req)
+		if err != nil {
+			fmt.Printf("ChatCompletion error: %v\n", err)
+			continue
+		}
+		fmt.Printf("%s\n\n", resp.Choices[0].Message.Content)
 
-	fmt.Println(codeInput)
-	// 处理 codeInput，你可以将其作为一个字符串传递给 generatedPrompt 函数
-	content := generatedPrompt(string(codeInput))
-	fmt.Println("content", content)
-	req.Messages = append(req.Messages, openai.ChatCompletionMessage{
-		Role:    openai.ChatMessageRoleUser,
-		Content: content,
-	})
-	resp, err := client.CreateChatCompletion(context.Background(), req)
-	if err != nil {
-		fmt.Printf("ChatCompletion error: %v\n", err)
-		return
 	}
-	fmt.Printf("%s\n\n", resp.Choices[0].Message.Content)
-	req.Messages = append(req.Messages, resp.Choices[0].Message)
-	fmt.Print("> ")
-
 }
 
 func loadAppSettings() {
@@ -88,10 +86,10 @@ func loadAppSettings() {
 }
 
 func generatedPrompt(input string) string {
-	prompt := "Please explain the following code in a short sentence:\n"
-	prompt += "```\n"
+	prompt := "Please explain the following code in a bullet-point format use lang=zh-tw:\n"
+	prompt += "###\n"
 	prompt += input
-	prompt += "```\n"
-	prompt += "Explanation:\n"
+	prompt += "###\n"
+	prompt += "please start explain:\n"
 	return prompt
 }

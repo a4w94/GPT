@@ -1,0 +1,379 @@
+I want to refactor from PHP to Golang. I've completed an implementation in PHP, and now I need to convert it to Golang. Here is an example of my php convert to golang code:
+
+Here is php code
+module name: rescuefund
+module name in zh-tw: 救援金
+```
+    /**
+     * 取得派發紀錄詳情資料
+     *
+     * @param int $eventId 派發事件ID
+     * @param array $params
+     * @param bool $export 是否為匯出Excel
+     * @return array|bool
+     */
+    public function getEventDetail($eventId, $params, $export = false)
+    {
+        $hallId = $params['hallId'];
+        $isTest = $params['isTest'] ?? '';
+        $currencyTmp = $params['currency'] ?? '';
+        $currency = ($currencyTmp == 'RMB') ? 'CNY' : $currencyTmp;
+        $username = (isset($params['username']) && !empty($params['username'])) ? explode(',',$params['username']) : []; // 會員帳號
+
+        $coreUser = new User();
+
+        // 取得會員ID列表
+        $userIdList = [];
+        if (!empty($username)) {
+            $userIdList = $coreUser->getUserIdListByUsername($hallId, $username);
+        }
+
+        $startTime = $params['startTime'] ?? '';
+        $endTime = $params['endTime'] ?? '';
+        $targetId = $params['targetId'] ?? '';
+
+        $originalStatus = $params['status'] ?? '';
+        $eventUserStatusList = config('offercenter.eventUserStatusOption.'.$originalStatus, []);
+        $searchStatusList = [];
+        $searchTurnDownReasonList = [];
+        foreach ($eventUserStatusList as $eventUserStatus) {
+            $statusTemp = explode('_', $eventUserStatus);
+
+            $status = $statusTemp[0] ?? '';
+            if ($status != '' && !in_array($status, $searchStatusList)) {
+                $searchStatusList[] = $status;
+            }
+
+            $turnDownReason = $statusTemp[1] ?? 0;
+            if ($turnDownReason !== 0 && !in_array($turnDownReason, $searchTurnDownReasonList)) {
+                $searchTurnDownReasonList[] = $turnDownReason;
+            }
+        }
+
+        $pageCount = $params['pageCount'] ?? 10;
+
+        // 取派發事件
+        $originalEvent = $this->eventRepositoryCommon->getSingleEvent($hallId, $eventId);
+        if (empty($originalEvent)) {
+            return false;
+        } elseif ($originalEvent['activity_type'] != $this->activityType) {
+            return 'activityTypeError';
+        }
+
+        // 各頁籤應顯示資料狀態 (匯出Excel如未指定頁籤則匯出全部資料)
+        $bookmark = $params['bookmark'] ?? '';
+        if (!$export && $bookmark == '') {
+            // 依據事件狀態 預設開啟頁籤
+            switch ($originalEvent['status']) {
+                    // 待結算 - 申請中
+                case 'SN':
+                    $bookmark = 'apply';
+                    break;
+                    // 待審核 - 待審核
+                case 'RN':
+                    $bookmark = 'review';
+                    break;
+                    // 其他 - 已派發
+                default:
+                    $bookmark = 'deposit';
+            }
+        }
+
+        // 取得頁籤應顯示的會員派發紀錄狀態
+        $bookmarkConversion = config('offercenter.bookmarkConversion');
+        $bookmarkStatus = $bookmarkConversion[$bookmark]['status'] ?? [];
+        $bookmarkTDReason = $bookmarkConversion[$bookmark]['tdReason'] ?? [];
+
+        // 取會員派發狀態
+        $originalEventDetail = $this->eventRepositoryRescuefund->getEventDetail(
+            $eventId,
+            $targetId,
+            $currency,
+            $userIdList,
+            $isTest,
+            $searchStatusList,
+            $searchTurnDownReasonList,
+            $startTime,
+            $endTime,
+            $bookmarkStatus,
+            $bookmarkTDReason,
+            $pageCount
+        );
+
+        // 幣別匯率
+        $coreCurrency = new Currency;
+        $currencyRate  = $coreCurrency->getCurrencyExchangeToRMB();
+
+        $coreTool = new Tool();
+
+        // 語系資料
+        $coreLang = new LangCore();
+
+        // 取得會員帳號
+        $userIds = collect($originalEventDetail['data'])->pluck('user_id')->toArray();
+        $usernameList = [];
+        if (!empty($userIds)) {
+            $usernameList = $coreUser->getUsernameListByUserId($userIds);
+        }
+
+        // 組合回傳內容
+        $eventDetail = [];
+        $targetIdListAll = [];
+        $statusList = [];
+        foreach ($originalEventDetail['data'] as $k => $v) {
+
+            $targetIdListAll[] = $v['target_id'];
+
+            // 備註
+            $memo = '';
+            if ($v['memo'] != '') {
+                $memo = $coreLang->get($v['memo'], 0);
+            }
+
+            // 申請資訊
+            $applyDetail = json_decode($v['apply_detail'], true);
+
+            $status = $v['status'];
+            // 派發紀錄狀態：已駁回 特例
+            if ($status == 'TD') {
+                // 當狀態(status) 為TD，會依據不可派發原因的不同而顯示不同的狀態名稱
+                $status .= '_' . $v['turn_down_reason'];
+            }
+
+            // 組合狀態篩選器資料(排除重複)
+            if (!in_array($status, $statusList)) {
+                $statusList[] = $status;
+            }
+
+            /*
+             * 可領金額顯示 -- 時機
+             *  1. 事件狀態為「申請中」
+             *  2. 不符合參加條件
+             *  3. 黑名單
+             */
+            if ($originalEvent['status'] == 'SN' || in_array($status, ['TD_1', 'TD_4'])) {
+                $amount = '--';
+            } else {
+                // 可領金額統一以人民幣呈現 (無條件捨去至小數第2位)
+                $toCNY = (float) $v['amount'] * $currencyRate[$v['currency']];
+                $amount = $coreTool->rounded($toCNY, 2, 3);
+            }
+
+            // 派發明細
+            $detail = json_decode($v['detail'], true);
+
+            $eventDetail[$k] = [
+                'id' => $v['id'], // 會員派發狀態ID
+                'username' => $usernameList[$v['user_id']] ?? $v['username'], // 會員帳號
+                'currency' => ($v['currency'] == 'CNY') ? 'RMB' : $v['currency'], // 幣別
+                'targetId' => $v['target_id'], // 派發當下的派發對象ID(層級ID or 等級ID)
+                'amount' => $amount, // 可領金額
+                'createTime' => $v['pass_time'] ?? '', // 派發時間
+                'receivedIP' => $v['show_ip'] ?? '', // 領取IP(顯示用)
+                'receivedTime' => $v['received_time'] ?? '', // 領取時間
+                'status' => $status, // 派發紀錄狀態(AR:申請中, RR:審核中, PN:派發未執行, PF:派發已處理, PM:派發失敗, CS:沖銷開始, CF:沖銷已完成, TD_1:已駁回-不符合參加條件, TD_2:已駁回-未完成任務, TD_3:已駁回-遭人工駁回, TD_4:已駁回-黑名單)
+                'memo' => $memo, // 備註
+                'reply' => $v['reply'], // 管理員回覆
+                'applicationTime' => $applyDetail['time'] ?? '', // 申請時間
+                'applicationIP' => $applyDetail['ip'] ?? '', // 申請IP
+                'reviewStatus' => $v['review_status'], // 審核狀態(1:待審核, 2:通過, 3:駁回)
+                'isRepay' => $detail['is_repay'] ?? 'N', // 是否用於借唄還款
+            ];
+        }
+
+        // 取得該事件的所有的派發對象ID
+        $originalEventTargetList = $this->eventRepositoryRescuefund->getEventTargetList($eventId);
+
+        $eventTargetList = [];
+        foreach ($originalEventTargetList as $v) {
+            $eventTargetList[] = $v['target_id'];
+        }
+        $targetIdListAll = array_merge($targetIdListAll, $eventTargetList);
+
+        // 取得等級ID對應的等級名稱
+        $targetList = $this->coreEventCommon->getTargetList($hallId, $targetIdListAll, $originalEvent['target_type']);
+        foreach ($eventDetail as $k => $v) {
+            // 派發當下的派發等級名稱
+            $eventDetail[$k]['targetName'] = $targetList[$v['targetId']] ?? '--';
+
+            // 歷史等級名稱
+            if (isset($v['beforeTargetId'])) {
+                $eventDetail[$k]['beforeTargetName'] = $targetList[$v['beforeTargetId']] ?? '--';
+            }
+        }
+
+        // 組合等級或層級列表
+        $targetOption = [];
+        sort($eventTargetList);
+        foreach ($eventTargetList as $targetId) {
+            if (isset($targetList[$targetId])) {
+                $targetOption[] = [
+                    'id' => $targetId,
+                    'name' => $targetList[$targetId]
+                ];
+            }
+        }
+
+        // 是否為人工審核事件
+        $isManualReview = 'N';
+        if (strtotime($originalEvent['review_end_time']) != strtotime($originalEvent['bet_end_time'])) {
+            $isManualReview = 'Y';
+        }
+
+        // 是否為玩家申請的活動
+        $applicationWay = $this->getActivityApplicationWay($originalEvent['activity_id']);
+
+        // 結算時 是否有遭黑名單擋下的會員
+        $haveBlacklistBlock = 'N';
+        $blacklistBlockNum = $this->eventRepositoryRescuefund->getEventDetailCount($eventId, '', '', [], '', 'TD', 4);
+        if ($blacklistBlockNum['reversalUser'] > 0) {
+            $haveBlacklistBlock = 'Y';
+        }
+
+        // 派發紀錄名稱 {活動名稱}_{派發日期}
+        $eventName = $this->coreEventCommon->getSingleEventName($originalEvent['activity_id'], $originalEvent['activity_type'], $originalEvent['award_type'], $originalEvent['create_time']);
+
+        // 取得用於借唄還款的派發紀錄
+        $repayEventUser = $this->eventRepositoryRescuefund->getRepayEventUser($eventId);
+
+        return [
+            // 派發紀錄名稱
+            'eventName' => $eventName,
+            // 總筆數
+            'totalCount' => $originalEventDetail['total'],
+            // 派發對象(1:層級, 2:VIP等級)
+            'targetType' => $originalEvent['target_type'],
+            // 活動類型(7:救援金)
+            'activityType' => $originalEvent['activity_type'],
+            // 獎金類型(1:晉級禮金, 2:周周息, 3:月月益)
+            'awardType' => $originalEvent['award_type'],
+            // 結算週期開始日期(美東)
+            'startTime' => $originalEvent['bet_start_time'],
+            // 結算週期結束日期(美東)
+            'endTime' => $originalEvent['bet_end_time'],
+            // 等級或層級列表
+            'targetList' => $targetOption,
+            // 派發紀錄詳情列表
+            'list' => $eventDetail,
+            // 事件狀態(SN:待結算, RN:待審核, PN:未派發, PU:自領中, PF:派發完成/已截止作廢, CR:沖銷處理中, CF:沖銷已完成)
+            'eventStatus' => $originalEvent['status'],
+            // 人工審核截止日(美東)
+            'reviewEndDate' => date('Y-m-d', strtotime($originalEvent['review_end_time'])),
+            // 是否為人工審核
+            'isManualReview' => $isManualReview,
+            // 是否為玩家申請
+            'isApplication' => $applicationWay[$originalEvent['activity_id']] ?? '',
+            // 是否有遭黑名單擋下的會員(僅撈取結算時遭擋下的資料，不列入派發遭擋下的資料)
+            'haveBlacklistBlock' => $haveBlacklistBlock,
+            // 狀態列表(派發紀錄詳情 狀態篩選器使用)
+            'statusList' => $statusList,
+            // 是否有用於借唄還款的派發紀錄
+            'useLoanRepay' => (!empty($repayEventUser)) ? 'Y' : 'N',
+        ];
+    }
+
+```
+
+Here is golang code after conver
+```
+package usecase
+
+import (
+	"bambi/internal/dddcore"
+	"context"
+)
+
+// GetRescuefundEventDetailUseCaseType 為了方便進行mock測試, 外層use case宣告需使用該型態
+type GetRescuefundEventDetailUseCaseType dddcore.UseCase[GetRescuefundEventDetailUseCaseInput, GetRescuefundEventDetailUseCaseOutput]
+
+var _ dddcore.Input = (*GetRescuefundEventDetailUseCaseInput)(nil)
+var _ dddcore.Output = (*GetRescuefundEventDetailUseCaseOutput)(nil)
+var _ GetRescuefundEventDetailUseCaseType = (*GetRescuefundEventDetailUseCase)(nil)
+
+// NewGetRescuefundEventDetailUseCase 建立 救援金-派發紀錄詳情use case
+func NewGetRescuefundEventDetailUseCase() *GetRescuefundEventDetailUseCase {
+	return &GetRescuefundEventDetailUseCase{}
+}
+
+// GetRescuefundEventDetailUseCaseInput 救援金-派發紀錄詳情Input
+type GetRescuefundEventDetailUseCaseInput struct {
+	HallID    int    // 廳主ID
+	IsTest    string // 是否為測試體系 (Y/N)
+	Currency  string // 幣別
+	Username  string // 會員帳號
+	StartTime string // 搜尋領取開始時間
+	EndTime   string // 搜尋領取結束時間
+	TargetID  int64  // 派發對象ID
+	Status    string // 派發狀態(by 會員)
+	Bookmark  string // 頁籤 (apply:申請中, review:待審核, deposit:已派發, undeposit:不須派發)
+	Page      int    // 當前頁數
+	PageCount int    // 單頁筆數
+}
+
+// GetRescuefundEventDetailUseCaseOutput 救援金-派發紀錄詳情Output
+type GetRescuefundEventDetailUseCaseOutput struct {
+	EventName          string                    // 派發紀錄名稱
+	TotalCount         int                       // 總筆數
+	TargetType         int     // 派發對象(1:層級, 2:VIP等級)
+	ActivityType       int // 活動類型(4:救援金)
+	AwardType          int       // 獎金類型(1:晉級禮金, 2:周周息, 3:月月益)
+	StartTime          string                    // 結算週期開始日期(美東)
+	EndTime            string                    // 結算週期結束日期(美東)
+	TargetList         []*Target                 // 等級或層級列表
+	List               []*EventRecord            // 派發紀錄詳情列表
+	EventStatus        int   // 事件狀態(SN:待結算, RN:待審核, PN:未派發, PU:自領中, PF:派發完成/已截止作廢, CR:沖銷處理中, CF:沖銷已完成)
+	ReviewEndDate      string                    // 人工審核截止日(美東)
+	IsManualReview     string                    // 是否為人工審核
+	HaveBlacklistBlock string                    // 是否有遭黑名單擋下的會員(僅撈取結算時遭擋下的資料，不列入派發遭擋下的資料)
+	IsApplication      string                    // 是否為玩家申請
+	StatusList         []string                  // 狀態列表(派發紀錄詳情 狀態篩選器使用)
+	UseLoanRepay       string                    // 是否有用於借唄還款的派發紀錄
+}
+
+// Target 等級或層級列表
+type Target struct {
+	ID   int    // ID
+	Name string // 名稱
+}
+
+// EventRecord 派發紀錄資料
+type EventRecord struct {
+	ID              int                       // 會員派發狀態ID
+	Username        string                    // 會員帳號
+	Currency        string                    // 幣別
+	TargetID        int                       // 派發當下的派發對象ID(層級ID or 等級ID)
+	Amount          string                    // 可領金額
+	CreateTime      string                    // 派發時間
+	ReceivedIP      string                    // 領取IP(顯示用)
+	ReceivedTime    string                    // 領取時間
+	Status          string                    // 派發紀錄狀態(AR:申請中, RR:審核中, PN:派發未執行, PF:派發已處理, PM:派發失敗, CS:沖銷開始, CF:沖銷已完成, TD_1:已駁回-不符合參加條件, TD_2:已駁回-未完成任務, TD_3:已駁回-遭人工駁回, TD_4:已駁回-黑名單)
+	Memo            string                    // 備註
+	Reply           string                    // 管理員回覆
+	ApplicationTime string                    // 申請時間
+	ApplicationIP   string                    // 申請IP
+	ReviewStatus    int // 審核狀態(1:待審核, 2:通過, 3:駁回)
+	IsRepay         string                    // 是否用於借唄還款
+	TargetName      string                    // 派發當下的派發等級名稱
+}
+
+// GetRescuefundEventDetailUseCase 救援金-派發紀錄詳情
+type GetRescuefundEventDetailUseCase struct{}
+
+// Execute executes the use case with the given input and returns the output and an error if applicable.
+// TODO: 待實作
+func (uc *GetRescuefundEventDetailUseCase) Execute(_ context.Context, input *GetRescuefundEventDetailUseCaseInput) (
+	*GetRescuefundEventDetailUseCaseOutput, *dddcore.Error,
+) {
+	return &GetRescuefundEventDetailUseCaseOutput{}, nil
+}
+```
+It Use DDD (Domain-Driven Design) to build
+must contain annotation like example
+annotation lang must be zh-tw
+must contain dddcore.Input, dddcore.Output, UseCaseType
+must contain New func to build UseCaseType
+
+Here is php code which i want convert it to golang
+{{ .input_message }}
+
+Please start convert it to golang!

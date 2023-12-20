@@ -15,8 +15,8 @@ func init() {
 }
 
 // 添加子命令
-var SubCmd1 = &cobra.Command{
-	Use:   "command1",
+var CmdExample = &cobra.Command{
+	Use:   "example",
 	Short: "Command 1 description",
 	Run:   command1Run,
 }
