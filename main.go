@@ -19,13 +19,12 @@ func init() {
 }
 
 func main() {
-	rootCmd := &cobra.Command{Use: "cmdexample"}
+	rootCmd := &cobra.Command{Use: "gpt"}
 
 	// 将子命令添加到根命令
-	rootCmd.AddCommand(cmd.CmdExample)
-	rootCmd.AddCommand(cmd.CmdExplain)
-	rootCmd.AddCommand(cmd.CmdRefactor)
-	rootCmd.AddCommand(cmd.CmdTranslate)
+	rootCmd.AddCommand(cmd.CmdExplain)   // 解釋 explain
+	rootCmd.AddCommand(cmd.CmdRefactor)  // 重構代碼 refactor
+	rootCmd.AddCommand(cmd.CmdTranslate) // 翻譯 translate
 
 	// 运行 Cobra 命令
 	if err := rootCmd.Execute(); err != nil {
