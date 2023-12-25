@@ -8,7 +8,10 @@ import (
 	"gpt/prompt"
 	"gpt/util"
 	"os"
+	"strconv"
+	"strings"
 
+	"github.com/fatih/color"
 	"github.com/sashabaranov/go-openai"
 	"github.com/spf13/cobra"
 )
@@ -87,13 +90,21 @@ func cmdRefactorRun(cmd *cobra.Command, args []string) {
 	}
 
 	req.Messages = append(req.Messages, msg)
-	fmt.Println("gpt working...")
+	color.Cyan("gpt is trying to work... ")
 	resp, err := client.CreateChatCompletion(context.Background(), req)
 	if err != nil {
 		fmt.Printf("ChatCompletion error: %v\n", err)
 	}
-	fmt.Printf("%s\n\n", resp.Choices[0].Message.Content)
+	color.Magenta("PromptTokens: " + strconv.Itoa(resp.Usage.PromptTokens) +
+		", CompletionTokens: " + strconv.Itoa(resp.Usage.CompletionTokens) +
+		", TotalTokens: " + strconv.Itoa(resp.Usage.TotalTokens),
+	)
+	message := fmt.Sprintf("%s\n\n", resp.Choices[0].Message.Content)
 
+	// Output commit summary data from AI
+	color.Yellow("===================Response=======================")
+	color.Yellow("\n" + strings.TrimSpace(message) + "\n\n")
+	color.Yellow("==================================================")
 }
 
 func loadRefactorAppSettings() {
@@ -108,12 +119,11 @@ func loadRefactorAppSettings() {
 	// 解析 JSON
 	decoder := json.NewDecoder(file)
 
+	// 将设置应用于全局变量
 	err = decoder.Decode(&refactorSetting)
 	if err != nil {
 		fmt.Println("Error decoding appSetting.json:", err)
 		return
 	}
 
-	// 将设置应用于全局变量
-	fmt.Println("refactorSetting", refactorSetting)
 }

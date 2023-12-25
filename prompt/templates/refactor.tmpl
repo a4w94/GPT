@@ -367,13 +367,21 @@ func (uc *GetRescuefundEventDetailUseCase) Execute(_ context.Context, input *Get
 	return &GetRescuefundEventDetailUseCaseOutput{}, nil
 }
 ```
-It Use DDD (Domain-Driven Design) to build
-must contain annotation like example
-annotation lang must be zh-tw
-must contain dddcore.Input, dddcore.Output, UseCaseType
-must contain New func to build UseCaseType
-
 Here is php code which i want convert it to golang
 {{ .input_message }}
 
+It Use DDD (Domain-Driven Design) to build
+must contain dddcore.Input, dddcore.Output, UseCaseType
+must contain New func to build UseCaseType
+all annotation must be in zh-tw
+each struct must have annotation in zh-tw like given golang example
+```
+// NewGetRescuefundEventDetailUseCase 建立 救援金-派發紀錄詳情use case
+func NewGetRescuefundEventDetailUseCase() *GetRescuefundEventDetailUseCase {
+	return &GetRescuefundEventDetailUseCase{}
+}
+```
+each struct element must keep the zh-tw annotations of the original example
+
 Please start convert it to golang!
+Here is the converted Go code for the provided PHP code:

@@ -12,11 +12,11 @@ import (
 type Data map[string]interface{}
 
 var (
-	templates    map[string]*template.Template
-	templatesDir = "templates"
+	templates map[string]*template.Template
+	//templatesDir = "templates"
 )
 
-func LoadTemplates(files embed.FS) error {
+func LoadTemplates(files embed.FS, templatesDir string) error {
 	if templates == nil {
 		templates = make(map[string]*template.Template)
 	}
